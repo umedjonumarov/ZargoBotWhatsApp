@@ -1,0 +1,14 @@
+.env
+.env.local
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.vscode/
+.idea/
+.DS_Store
+*.log
+.claude/
+.mcp.json
+.playwright-mcp/
