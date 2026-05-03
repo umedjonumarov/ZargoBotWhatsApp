@@ -92,8 +92,7 @@ def _handle_with_ai(chat_id: str, phone: str, user_message: str, whatsapp_name: 
     if customer:
         customer_info = (
             f"📱 Телефон: +{customer['phone']}\n"
-            f"👤 Исм: {customer.get('name', '?')}\n"
-            f"⚧ Жинси: {customer.get('gender', '?')}\n"
+            f"👤 Исм: {customer.get('name', '?')} ({customer.get('gender', 'эркак')})\n"
             f"🛒 Жами буюртмалар: {customer.get('total_orders', 0)} та\n"
             f"💰 Жами харажат: {customer.get('total_spent', 0)} сомони\n"
             f"📍 Манзил: {customer.get('address', '?')}\n"
@@ -105,14 +104,18 @@ def _handle_with_ai(chat_id: str, phone: str, user_message: str, whatsapp_name: 
             for o in last_orders:
                 customer_info += f"  • #{o['number']} — {o.get('items', '')} ({o.get('total', 0)}с)\n"
     else:
+        # ⚠️ WhatsApp profil ismini AI ga BERMAYMIZ — har doim ozidan sorashi kerak
         customer_info = (
-            f"📱 Телефон: +{phone} (янги мижоз — исмини сўра)\n"
-            f"⚠️ WhatsApp профил исми: {whatsapp_name or 'номаълум'}\n"
+            f"📱 Телефон: +{phone}\n"
+            f"⛔ ЯНГИ МИЖОЗ — исми ҳали номаълум, мажбурий равишда сўрашинг керак!\n"
         )
 
     # Loyalty: navbatdagi zakaz N-chimi?
     next_order_number = (customer.get("total_orders", 0) + 1) if customer else 1
     is_loyalty = (next_order_number % LOYALTY_EVERY_N_ORDERS == 0)
+
+    # Birinchi xabarmi? (suhbat tarixi bo'sh bo'lsa)
+    is_first_message = len(ai.get_conversation(phone)) == 0
 
     # System prompt
     products_text = sheets.format_products_for_ai()
@@ -121,6 +124,8 @@ def _handle_with_ai(chat_id: str, phone: str, user_message: str, whatsapp_name: 
         customer_info=customer_info,
         is_after_hours=is_after_hours(),
         is_loyalty_reward=is_loyalty,
+        is_new_customer=(customer is None),
+        is_first_message=is_first_message,
     )
 
     # AI ga so'rov

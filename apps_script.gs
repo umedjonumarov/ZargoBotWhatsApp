@@ -68,10 +68,11 @@ function getProducts(ss) {
   for (let i = 1; i < data.length; i++) {
     if (!data[i][0]) continue;
     products.push({
-      name:     data[i][0],
-      somoni:   Number(data[i][1]) || 0,
-      diram:    Number(data[i][2]) || 0,
-      category: data[i][3] || ''
+      name:       data[i][0],
+      somoni:     Number(data[i][1]) || 0,
+      diram:      Number(data[i][2]) || 0,
+      category:   data[i][3] || '',
+      splittable: data[i][4] || 'Йўқ'  // Йўқ / Дона / Грамм
     });
   }
   return { products: products };

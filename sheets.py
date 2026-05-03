@@ -86,7 +86,14 @@ def format_products_for_ai() -> str:
         lines.append(f"\n📦 {cat.upper()}:")
         for p in by_category[cat]:
             price = format_price(p["somoni"], p["diram"])
-            lines.append(f"  • {p['name']} — {price}")
+            split = p.get("splittable", "Йўқ")
+            split_info = ""
+            if split == "Дона":
+                # Mahsulot nomidan dona sonini olishga harakat
+                split_info = " [бўлинади дона билан]"
+            elif split == "Грамм":
+                split_info = " [бўлинади грамм/кг билан]"
+            lines.append(f"  • {p['name']} — {price}{split_info}")
 
     return "\n".join(lines)
 
