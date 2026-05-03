@@ -13,33 +13,59 @@ logger = logging.getLogger(__name__)
 
 # === MAHSULOT QIDIRISH ===
 
+def _normalize_cyrillic(text: str) -> str:
+    """O'zbek/tojik kirill harflarini standart shaklga keltirish (fuzzy match uchun)
+    ҳ → х, қ → к, ў → у, ғ → г, ё → е
+    """
+    if not text:
+        return ""
+    replacements = {
+        'ҳ': 'х', 'Ҳ': 'Х',
+        'қ': 'к', 'Қ': 'К',
+        'ў': 'у', 'Ў': 'У',
+        'ғ': 'г', 'Ғ': 'Г',
+        'ё': 'е', 'Ё': 'Е',
+    }
+    result = text
+    for old, new in replacements.items():
+        result = result.replace(old, new)
+    return result.lower().strip()
+
+
 def find_product(name_query: str, products: List[Dict]) -> Optional[Dict]:
-    """Mahsulotni qisman nomi bo'yicha topish"""
+    """Mahsulotni qisman nomi bo'yicha topish (fuzzy match bilan)"""
     if not name_query:
         return None
 
     query = name_query.lower().strip()
+    query_norm = _normalize_cyrillic(query)
 
-    # 1. Aynan mos kelish
+    # 1. Aynan mos kelish (oddiy)
     for p in products:
         if p["name"].lower() == query:
             return p
 
-    # 2. Qisqa nomda mos
+    # 2. Qisqa nomda mos (oddiy)
     for p in products:
         short = re.sub(r'\s*\([^)]*\)\s*', '', p["name"]).lower().strip()
         if short == query:
             return p
 
-    # 3. Boshlanishi mos
+    # 3. Normalized fuzzy mos kelish (qisqa nom)
     for p in products:
         short = re.sub(r'\s*\([^)]*\)\s*', '', p["name"]).lower().strip()
-        if short.startswith(query) or query.startswith(short):
+        if _normalize_cyrillic(short) == query_norm:
             return p
 
-    # 4. Substring
+    # 4. Boshlanishi mos (normalized)
     for p in products:
-        if query in p["name"].lower():
+        short_norm = _normalize_cyrillic(re.sub(r'\s*\([^)]*\)\s*', '', p["name"]))
+        if short_norm.startswith(query_norm) or query_norm.startswith(short_norm):
+            return p
+
+    # 5. Substring (normalized)
+    for p in products:
+        if query_norm in _normalize_cyrillic(p["name"]):
             return p
 
     return None

@@ -155,6 +155,9 @@ def _process(chat_id: str, phone: str, user_message: str) -> None:
     elif intent == "confirm_order":
         _handle_order_confirm(chat_id, phone, cart, customer)
 
+    elif intent == "proceed":
+        _handle_proceed(chat_id, phone, cart)
+
     elif intent == "cancel_order":
         _handle_cancel(chat_id, phone, cart)
 
@@ -479,6 +482,42 @@ def _handle_order_confirm(chat_id: str, phone: str, cart: Cart, customer: Option
 
     # Korzinani tozalaymiz
     cart_mod.reset_cart(phone)
+
+
+def _handle_proceed(chat_id: str, phone: str, cart: Cart) -> None:
+    """Mijoz mahsulot tanlashni tugatdi — keyingi qadamga o'tamiz"""
+    if cart.is_empty():
+        whatsapp.send_message(chat_id, prompts.cart_empty())
+        return
+
+    # Eng kam zakaz tekshiruvi
+    if cart.total < MIN_ORDER_SOMONI:
+        needed = MIN_ORDER_SOMONI - cart.total
+        whatsapp.send_message(
+            chat_id,
+            f"Жорий жами: *{cart.total_display()}*. Энг кам буюртма *{MIN_ORDER_SOMONI}с*. "
+            f"Яна *{p.format_money(needed)}* қўшсангиз — бепул етказамиз!",
+        )
+        return
+
+    # Manzil yo'q bo'lsa — manzil so'raymiz
+    if not cart.address:
+        whatsapp.send_message(
+            chat_id,
+            f"🛒 Жами: *{cart.total_display()}*\n\n{prompts.address_request()}",
+        )
+        return
+
+    # Telefon yo'q bo'lsa — telefon so'raymiz
+    if not cart.confirmed_phone:
+        if p.is_tajik_phone(phone):
+            whatsapp.send_message(chat_id, prompts.phone_confirm_request(p.format_phone(phone)))
+        else:
+            whatsapp.send_message(chat_id, prompts.phone_request_tajik())
+        return
+
+    # Hammasi tayyor — tasdiqlash so'raymiz
+    _ask_confirmation(chat_id, cart)
 
 
 def _handle_cancel(chat_id: str, phone: str, cart: Cart) -> None:
