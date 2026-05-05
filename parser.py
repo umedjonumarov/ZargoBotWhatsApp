@@ -169,6 +169,22 @@ def add_by_quantity(
 
     # === 1. Bo'linmaydigan ===
     if splittable == "Йўқ":
+        # Mahsulot paket o'lchami va birligini olamiz: "Сариқ ёғ (200г)" → 200г = 0.2кг
+        pack_qty_in_unit = 1.0
+        pack_unit_match = re.search(r'\((\d+(?:[.,]\d+)?)\s*(дона|кг|г|л|мл)\)', product["name"])
+        if pack_unit_match:
+            pack_qty_in_unit = float(pack_unit_match.group(1).replace(",", "."))
+            pack_unit_name = pack_unit_match.group(2)
+            if pack_unit_name == "г":
+                pack_qty_in_unit = pack_qty_in_unit / 1000
+                pack_unit_name = "кг"
+            elif pack_unit_name == "мл":
+                pack_qty_in_unit = pack_qty_in_unit / 1000
+                pack_unit_name = "л"
+        else:
+            pack_unit_name = ""
+
+        # Agar foydalanuvchi unit aytmagan, yoki "та/пакет/паулдалик" desa
         if user_unit in ("", "та", "паулдалик", "паулдалар", "пакет", "дона", "штука"):
             n = int(round(quantity))
             if n < 1:
@@ -180,6 +196,26 @@ def add_by_quantity(
                 qty_unit="пакет",
                 price_total=total,
             ), ""
+
+        # Agar foydalanuvchi paket birligini ishlatdi (masalan "1 л сут" = 1 paket)
+        if pack_unit_name and user_unit == pack_unit_name:
+            # Paket sonini hisoblash
+            n_packets = quantity / pack_qty_in_unit
+            n = int(round(n_packets))
+            if n < 1:
+                # Mijoz paketdan kam so'radi → bo'linmaydi
+                return None, (
+                    f'{product["name"]} фақат тўлиқ паулдалик сотилади ({format_money(pack_price)}). '
+                    f'Бутун паулдалик оласизми?'
+                )
+            total = round(pack_price * n, 2)
+            return CartItem(
+                product_name=product["name"],
+                qty_value=n,
+                qty_unit="пакет",
+                price_total=total,
+            ), ""
+
         return None, f'{product["name"]} фақат тўлиқ паулдалик сотилади ({format_money(pack_price)})'
 
     # === 2. Donada bo'linadigan ===
@@ -284,63 +320,4 @@ def add_by_money(
                 alt = {
                     "qty": rounded,
                     "unit": "кг",
-                    "price": alt_total,
-                }
-
-        # Aniq vazni 3 raqamgacha
-        qty_exact = round(qty_exact, 3)
-
-        return CartItem(
-            product_name=product["name"],
-            qty_value=qty_exact,
-            qty_unit=base_unit,
-            price_total=total,
-        ), "", alt
-
-    return None, "Маҳсулот тури аниқ эмас", None
-
-
-# === YORDAMCHI ===
-
-def format_money(amount: float) -> str:
-    """49с yoki 9.5с"""
-    if amount == int(amount):
-        return f"{int(amount)}с"
-    return f"{amount:.2f}с"
-
-
-def format_qty_with_unit(qty: float, unit: str) -> str:
-    """0.5 кг yoki 6 дона"""
-    if unit == "дона":
-        return f"{int(qty)} дона"
-    if qty == int(qty):
-        return f"{int(qty)} {unit}"
-    return f"{qty:g} {unit}"
-
-
-def is_tajik_phone(phone_text: str) -> bool:
-    digits = re.sub(r'\D', '', phone_text)
-    return digits.startswith("992") and len(digits) == 12
-
-
-def normalize_phone(phone_text: str) -> str:
-    return re.sub(r'\D', '', phone_text)
-
-
-def format_phone(phone: str) -> str:
-    digits = normalize_phone(phone)
-    if len(digits) == 12 and digits.startswith("992"):
-        return f"+{digits[:3]} {digits[3:5]} {digits[5:8]} {digits[8:10]} {digits[10:]}"
-    return f"+{digits}"
-
-
-def extract_phone_from_text(text: str) -> Optional[str]:
-    """Matn ichidan telefon raqami topish"""
-    digits = re.sub(r'\D', '', text)
-    if len(digits) >= 9:
-        # Faqat oxirgi 12 ta raqam
-        if digits.startswith("992"):
-            return digits[:12] if len(digits) >= 12 else None
-        elif digits.startswith("9") and len(digits) >= 9:
-            return "992" + digits[-9:]
-    return None
+                    "price": alt_total
