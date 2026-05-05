@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def parse_intent(user_message: str, context_hint: str = "") -> Dict:
+def parse_intent(user_message: str, context_hint: str = "", products_menu: str = "") -> Dict:
     """Mijoz xabarini AI orqali tushunish va structured ma'lumot qaytarish."""
     try:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": INTENT_PARSING_SYSTEM},
-                {"role": "user", "content": build_intent_prompt(user_message, context_hint)},
+                {"role": "user", "content": build_intent_prompt(user_message, context_hint, products_menu)},
             ],
             temperature=0.1,
             max_tokens=400,

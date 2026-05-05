@@ -72,7 +72,8 @@ function getProducts(ss) {
       somoni:     Number(data[i][1]) || 0,
       diram:      Number(data[i][2]) || 0,
       category:   data[i][3] || '',
-      splittable: data[i][4] || 'Йўқ'  // Йўқ / Дона / Грамм
+      splittable: data[i][4] || 'Йўқ',  // Йўқ / Дона / Грамм
+      synonyms:   data[i][5] || ''       // vergul bilan ajratilgan sinonimlar
     });
   }
   return { products: products };

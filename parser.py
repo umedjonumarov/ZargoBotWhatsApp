@@ -33,7 +33,7 @@ def _normalize_cyrillic(text: str) -> str:
 
 
 def find_product(name_query: str, products: List[Dict]) -> Optional[Dict]:
-    """Mahsulotni qisman nomi bo'yicha topish (fuzzy match bilan)"""
+    """Mahsulotni qisman nomi bo'yicha topish (fuzzy + sinonim)"""
     if not name_query:
         return None
 
@@ -51,19 +51,41 @@ def find_product(name_query: str, products: List[Dict]) -> Optional[Dict]:
         if short == query:
             return p
 
-    # 3. Normalized fuzzy mos kelish (qisqa nom)
+    # 3. Sinonimlar ichida qidirish (Sheets'dagi "Синонимлар" ustunidan)
+    for p in products:
+        synonyms_raw = p.get("synonyms", "")
+        if not synonyms_raw:
+            continue
+        for syn in synonyms_raw.split(","):
+            syn_clean = syn.strip().lower()
+            if not syn_clean:
+                continue
+            if syn_clean == query or _normalize_cyrillic(syn_clean) == query_norm:
+                return p
+
+    # 4. Normalized fuzzy mos kelish (qisqa nom)
     for p in products:
         short = re.sub(r'\s*\([^)]*\)\s*', '', p["name"]).lower().strip()
         if _normalize_cyrillic(short) == query_norm:
             return p
 
-    # 4. Boshlanishi mos (normalized)
+    # 5. Boshlanishi mos (normalized)
     for p in products:
         short_norm = _normalize_cyrillic(re.sub(r'\s*\([^)]*\)\s*', '', p["name"]))
         if short_norm.startswith(query_norm) or query_norm.startswith(short_norm):
             return p
 
-    # 5. Substring (normalized)
+    # 6. Sinonim ichida substring
+    for p in products:
+        synonyms_raw = p.get("synonyms", "")
+        if not synonyms_raw:
+            continue
+        for syn in synonyms_raw.split(","):
+            syn_norm = _normalize_cyrillic(syn.strip())
+            if syn_norm and (query_norm in syn_norm or syn_norm in query_norm):
+                return p
+
+    # 7. Substring (normalized)
     for p in products:
         if query_norm in _normalize_cyrillic(p["name"]):
             return p

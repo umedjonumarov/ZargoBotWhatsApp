@@ -110,7 +110,7 @@ def _process(chat_id: str, phone: str, user_message: str) -> None:
 
     # === AI DAN INTENT OLISH ===
     context_hint = _build_context_hint(cart)
-    intent_data = ai.parse_intent(user_message, context_hint)
+    intent_data = ai.parse_intent(user_message, context_hint, _products_menu_for_ai())
     intent = intent_data.get("intent", "unclear")
 
     logger.info(f"+{phone}: intent={intent}, msg={user_message[:80]}")
@@ -566,6 +566,20 @@ def _handle_night_order_save(chat_id: str, phone: str, cart: Cart) -> None:
         })
 
     cart_mod.reset_cart(phone)
+
+
+def _products_menu_for_ai() -> str:
+    """AI ga mahsulotlar ro'yxatini qisqa ko'rinishda berish (sinonimlar bilan)"""
+    products = sheets.get_products()
+    lines = []
+    for p in products:
+        short = p["name"]
+        syns = p.get("synonyms", "")
+        if syns:
+            lines.append(f"- {short} (синонимлар: {syns})")
+        else:
+            lines.append(f"- {short}")
+    return "\n".join(lines)
 
 
 def _build_context_hint(cart: Cart) -> str:

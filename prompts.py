@@ -215,10 +215,18 @@ INTENT_PARSING_SYSTEM = """Сен Zargo дўкони чат ботининг т�
 - Жавоб ФАҚАТ JSON блок бўлсин, бошқа гап бўлмасин"""
 
 
-def build_intent_prompt(user_message: str, context_hint: str = "") -> str:
+def build_intent_prompt(user_message: str, context_hint: str = "", products_menu: str = "") -> str:
     """Intent parsing uchun user prompt"""
     hint = f"\n\nКонтекст: {context_hint}" if context_hint else ""
-    return f'Мижоз хабари: "{user_message}"{hint}\n\nIntent JSON ни қайтар:'
+    menu_part = ""
+    if products_menu:
+        menu_part = (
+            f"\n\nДЎКОНДА БОР МАҲСУЛОТЛАР (АНИҚ номлари):\n{products_menu}\n"
+            f"⚠️ Мижоз бошқа тилда (тожик, рус, шева) ёзса ҳам — рўйхатдан тегишли маҳсулот номини топ. "
+            f'Масалан: "шир" → "Сут", "мурғ" → "Товуқ", "катушка" → "Картошка", "канд" → "Шакар", '
+            f'"намак" → "Туз", "биринҷ" → "Гуруч", "маска" → "Сариқ ёғ", "бехи" → "Сабзи".'
+        )
+    return f'Мижоз хабари: "{user_message}"{hint}{menu_part}\n\nIntent JSON ни қайтар:'
 
 
 # =========================================================================
