@@ -95,12 +95,35 @@ def parse_incoming_message(data: Dict) -> Optional[Dict]:
     message_data = data.get("messageData", {})
     message_type = message_data.get("typeMessage", "")
 
-    # Matn xabari
     text = ""
+    # 1. Оддий матн ёки линкли матн
     if "textMessageData" in message_data:
         text = message_data["textMessageData"].get("textMessage", "")
     elif "extendedTextMessageData" in message_data:
         text = message_data["extendedTextMessageData"].get("text", "")
+        
+    # 2. WhatsApp Каталогдан келган "Корзина" (Буюртма) хабари
+    elif message_type == "orderMessage" and "orderMessageData" in message_data:
+        order_data = message_data["orderMessageData"]
+        items = []
+        
+        # Корзинадаги ҳар бир маҳсулотни ўқиб оламиз
+        if "parameters" in order_data:
+            for item in order_data["parameters"]:
+                name = item.get("name", "Маҳсулот")
+                qty = item.get("quantity", 1)
+                items.append(f"{qty} та {name}")
+        
+        # Ботнинг сунъий интеллекти (AI) тушуниши учун гап тузамиз
+        if items:
+            text = "Мен каталогдан қуйидагиларни танладим:\n" + "\n".join(items)
+        else:
+            text = "Мен каталогдан маҳсулот танладим."
+            
+        # Агар мижоз корзина билан бирга изоҳ (комментарий) ёзган бўлса, уни ҳам қўшамиз
+        caption = order_data.get("message", "")
+        if caption:
+            text += f"\nИзоҳ: {caption}"
 
     return {
         "chat_id": chat_id,
