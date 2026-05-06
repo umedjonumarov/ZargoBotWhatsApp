@@ -306,7 +306,7 @@ def add_by_money(
             price_total=total,
         ), "", None
 
-    # === 3. Vazn ===
+   # === 3. Vazn ===
     if splittable == "Грамм":
         qty_exact = money_amount / unit_price
         total = round(unit_price * qty_exact, 2)
@@ -322,3 +322,12 @@ def add_by_money(
                     "unit": "кг",
                     "price": alt_total
                 }
+
+        return CartItem(
+            product_name=product["name"],
+            qty_value=qty_exact,
+            qty_unit=base_unit,
+            price_total=total,
+        ), "", alt
+
+    return None, "Маҳсулот тури аниқ эмас", None
