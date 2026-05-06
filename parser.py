@@ -321,3 +321,4 @@ def add_by_money(
                     "qty": rounded,
                     "unit": "кг",
                     "price": alt_total
+                }
