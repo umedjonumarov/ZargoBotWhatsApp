@@ -125,6 +125,36 @@ def parse_incoming_message(data: Dict) -> Optional[Dict]:
         if caption:
             text += f"\nИзоҳ: {caption}"
 
+    # Catalog order (WhatsApp Business korzinasi)
+    order_items = []
+    is_order = False
+    if (
+        message_type in ("orderMessage", "interactiveMessage")
+        or "orderMessageData" in message_data
+        or "interactiveButtonsReply" in message_data
+    ):
+        is_order = True
+        order_data = (
+            message_data.get("orderMessageData")
+            or message_data.get("orderMessage")
+            or message_data.get("interactiveMessageData", {}).get("orderData")
+            or {}
+        )
+        items_raw = (
+            order_data.get("items")
+            or order_data.get("products")
+            or order_data.get("orderItems")
+            or order_data.get("itemsList")
+            or []
+        )
+        for it in items_raw:
+            order_items.append({
+                "name": it.get("name") or it.get("productName") or it.get("itemName") or "",
+                "qty": int(it.get("quantity") or it.get("qty") or 1),
+                "price": float(it.get("price") or it.get("itemPrice") or 0),
+                "currency": it.get("currency") or "",
+            })
+
     return {
         "chat_id": chat_id,
         "sender_number": sender_number,
@@ -134,4 +164,7 @@ def parse_incoming_message(data: Dict) -> Optional[Dict]:
         "is_text": bool(text),
         "is_voice": message_type == "audioMessage",
         "is_image": message_type == "imageMessage",
+        "is_order": is_order,
+        "order_items": order_items,
+        "raw_message_data": message_data,
     }

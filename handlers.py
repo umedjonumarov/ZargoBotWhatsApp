@@ -50,7 +50,22 @@ def handle_customer_message(parsed: Dict) -> None:
         handle_admin_message(parsed)
         return
 
-    # 3. Ovozli yoki rasm xabar
+    # 3. Catalog korzinasi (WhatsApp Business)
+    if parsed.get("is_order"):
+        try:
+            _handle_catalog_order(chat_id, sender_number, parsed)
+        except Exception as e:
+            logger.error(f"Catalog order xato: {e}", exc_info=True)
+            whatsapp.send_message(chat_id, prompts.technical_error())
+            whatsapp.send_to_admin(
+                f"⚠️ *Каталог буюртмаси хатоси*\n"
+                f"Мижоз: +{sender_number}\n"
+                f"Хато: {type(e).__name__}: {str(e)[:200]}\n"
+                f"Маълумот: {parsed.get('raw_message_data', {})}"[:500]
+            )
+        return
+
+    # 4. Ovozli yoki rasm xabar
     if parsed["is_voice"] or parsed["is_image"]:
         whatsapp.send_message(chat_id, prompts.voice_image_response())
         return
@@ -566,6 +581,85 @@ def _handle_night_order_save(chat_id: str, phone: str, cart: Cart) -> None:
         })
 
     cart_mod.reset_cart(phone)
+
+
+def _handle_catalog_order(chat_id: str, phone: str, parsed: Dict) -> None:
+    """WhatsApp Business catalog'dan kelgan korzinani qabul qilish"""
+    cart = cart_mod.get_cart(phone)
+    customer = sheets.get_customer(phone)
+
+    # Mijoz ma'lumotlari yo'q bo'lsa
+    if not cart.customer_name and customer:
+        cart.customer_name = customer.get("name")
+        cart.customer_gender = customer.get("gender", "эркак")
+    elif not cart.customer_name and not customer:
+        # Yangi mijoz, lekin catalog orqali kirdi
+        whatsapp.send_message(
+            chat_id,
+            "Ассалому алейкум! Каталогингиз қабул қилинди. 🛒\n\n"
+            "Илтимос, аввало танишайлик — сизга қандай мурожаат қилишим мумкин?",
+        )
+        # Korzina ma'lumotini saqlab qo'yamiz, ism kelgach qayta ishlanadi
+        _stage_catalog_items(cart, parsed.get("order_items", []))
+        return
+
+    items_added = []
+    items_failed = []
+
+    for raw_item in parsed.get("order_items", []):
+        product_name = raw_item.get("name", "").strip()
+        qty = raw_item.get("qty", 1)
+
+        if not product_name:
+            continue
+
+        # Mahsulotni Sheet'dan topish
+        item, err = p.add_by_quantity(product_name, qty, "")
+        if item:
+            cart.add_item(item)
+            items_added.append(
+                f"✅ {item.short_name()} — {item.display_qty()} ({item.display_price()})"
+            )
+        else:
+            items_failed.append(f"❌ {product_name}: {err}")
+
+    if not items_added and not items_failed:
+        whatsapp.send_message(
+            chat_id,
+            "Корзинадан маҳсулот ўқиб бўлмади. Илтимос матн орқали ёзинг.",
+        )
+        return
+
+    # Mijozga javob
+    response = ["🛒 *Каталогдан буюртмангиз қабул қилинди:*\n"]
+    response.extend(items_added)
+    if items_failed:
+        response.append("")
+        response.extend(items_failed)
+    response.append(f"\n💰 Жами: *{cart.total_display()}*")
+
+    if cart.total < MIN_ORDER_SOMONI:
+        needed = MIN_ORDER_SOMONI - cart.total
+        response.append(
+            f"\n💡 Энг кам буюртма *{MIN_ORDER_SOMONI}с*. "
+            f"Яна *{p.format_money(needed)}* қўшсангиз — бепул етказамиз!"
+        )
+    else:
+        response.append(f"\n📍 {prompts.address_request()}")
+
+    whatsapp.send_message(chat_id, "\n".join(response))
+
+
+def _stage_catalog_items(cart: Cart, items: list) -> None:
+    """Yangi mijoz catalog yuborgan, ismini kutib turamiz, items'ni saqlaymiz"""
+    for raw_item in items:
+        product_name = raw_item.get("name", "").strip()
+        qty = raw_item.get("qty", 1)
+        if not product_name:
+            continue
+        item, err = p.add_by_quantity(product_name, qty, "")
+        if item:
+            cart.add_item(item)
 
 
 def _products_menu_for_ai() -> str:
