@@ -162,4 +162,4 @@ def add_by_quantity(product_name: str, quantity: float, unit: str) -> Tuple[Opti
     product = find_product(product_name, products)
 
     if not product:
-        return None, f'"{product_name}" маҳсулоти топилм
+        return None, f'"{product_name}" маҳсулоти топилмади.'
