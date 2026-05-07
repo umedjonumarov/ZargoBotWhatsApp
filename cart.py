@@ -1,6 +1,6 @@
 """
-ZargoBot — Korzina (Cart) modeli va boshqaruvi
-YANGILANDI: Sheets'da saqlash, in-memory emas
+ZargoBot - Korzina (Cart) modeli va boshqaruvi
+Hybrid: In-memory (asosiy) + Sheets (fallback, agar Apps Script qo'llab-quvvatlasa)
 """
 import logging
 import re
@@ -21,7 +21,6 @@ class CartItem:
     price_total: float
 
     def display_qty(self) -> str:
-        """Foydalanuvchiga ko'rinadigan miqdor"""
         if self.qty_unit == "дона":
             return f"{int(self.qty_value)} дона"
         elif self.qty_unit in ("кг", "л"):
@@ -34,16 +33,13 @@ class CartItem:
         return f"{self.qty_value:g} {self.qty_unit}"
 
     def display_price(self) -> str:
-        """Narxni '40с' yoki '9.5с' ko'rinishida"""
         if self.price_total == int(self.price_total):
             return f"{int(self.price_total)}с"
         return f"{self.price_total:.2f}с"
 
     def short_name(self) -> str:
-        """Mahsulot nomidan o'lchov bilan birgalik qismni olib tashlash"""
         return re.sub(r'\s*\([^)]*\)\s*', '', self.product_name).strip()
 
-    # === YANGI: Sheets'da saqlash uchun ===
     def to_dict(self) -> Dict:
         return {
             "product_name": self.product_name,
@@ -64,7 +60,7 @@ class CartItem:
 
 @dataclass
 class Cart:
-    """Mijozning korzinasi va hamma ma'lumotlari"""
+    """Mijozning korzinasi"""
     phone: str
     items: List[CartItem] = field(default_factory=list)
     customer_name: Optional[str] = None
@@ -86,7 +82,6 @@ class Cart:
         return len(self.items) == 0
 
     def add_item(self, item: CartItem) -> None:
-        """Korzinaga qo'shish — bir xil mahsulot bo'lsa miqdor yig'iladi"""
         for existing in self.items:
             if existing.product_name == item.product_name and existing.qty_unit == item.qty_unit:
                 existing.qty_value += item.qty_value
@@ -95,7 +90,6 @@ class Cart:
         self.items.append(item)
 
     def remove_item(self, product_name_query: str) -> bool:
-        """Mahsulotni qisman nomidan o'chirish"""
         query_lower = product_name_query.lower().strip()
         for i, item in enumerate(self.items):
             if (
@@ -107,7 +101,6 @@ class Cart:
         return False
 
     def clear(self) -> None:
-        """Korzinani butunlay tozalash"""
         self.items = []
         self.address = None
         self.confirmed_phone = None
@@ -115,16 +108,14 @@ class Cart:
         self.is_night = False
 
     def format_items(self) -> str:
-        """Mijozga ko'rinadigan korzina ro'yxati"""
         if not self.items:
             return "(корзинангиз бўш)"
         lines = []
         for item in self.items:
-            lines.append(f"• {item.short_name()} — {item.display_qty()} ({item.display_price()})")
+            lines.append(f"• {item.short_name()} - {item.display_qty()} ({item.display_price()})")
         return "\n".join(lines)
 
     def format_full(self) -> str:
-        """To'liq korzina + jami summa"""
         if not self.items:
             return "Корзинангиз бўш."
         result = self.format_items()
@@ -132,19 +123,16 @@ class Cart:
         return result
 
     def to_admin_format(self) -> str:
-        """Admin uchun batafsil format"""
         if not self.items:
             return "(буюртма бўш)"
         lines = []
         for item in self.items:
-            lines.append(f"• {item.product_name} × {item.display_qty()} = {item.display_price()}")
+            lines.append(f"• {item.product_name} x {item.display_qty()} = {item.display_price()}")
         return "\n".join(lines)
 
     def to_metadata(self) -> List[Dict]:
-        """Sheets'ga saqlash uchun metadata"""
         return [item.to_dict() for item in self.items]
 
-    # === YANGI: Sheets'da saqlash uchun ===
     def to_dict(self) -> Dict:
         return {
             "phone": self.phone,
@@ -170,24 +158,55 @@ class Cart:
         return cart
 
 
-# === YANGI: Sheets'da saqlash ===
+# =========================================================================
+# IN-MEMORY storage (asosiy) + Sheets fallback (agar mavjud bo'lsa)
+# =========================================================================
+
+_memory_carts: Dict[str, Cart] = {}
+
+
 def get_cart(phone: str) -> Cart:
-    """Mijoz korzinasini olish (Sheets'dan)"""
-    cart_data = sheets.get_cart(phone)
-    if cart_data:
-        return Cart.from_dict(cart_data)
-    return Cart(phone=phone)
+    """Mijoz korzinasini olish - avval xotira, keyin Sheets fallback"""
+    # 1) In-memory
+    if phone in _memory_carts:
+        return _memory_carts[phone]
+
+    # 2) Sheets (agar Apps Script qo'llab-quvvatlasa)
+    try:
+        cart_data = sheets.get_cart(phone)
+        if cart_data and isinstance(cart_data, dict) and cart_data.get("phone"):
+            cart = Cart.from_dict(cart_data)
+            _memory_carts[phone] = cart
+            return cart
+    except Exception as e:
+        logger.debug(f"Sheets get_cart fallback: {e}")
+
+    # 3) Yangi cart yaratish
+    cart = Cart(phone=phone)
+    _memory_carts[phone] = cart
+    return cart
 
 
 def save_cart(cart: Cart) -> None:
-    """Korzinani saqlash (Sheets'ga)"""
-    sheets.save_cart(cart.to_dict())
+    """Korzinani saqlash - xotirada doim, Sheets'da imkoni bo'lsa"""
+    _memory_carts[cart.phone] = cart
+    try:
+        sheets.save_cart(cart.to_dict())
+    except Exception as e:
+        logger.debug(f"Sheets save_cart fallback: {e}")
 
 
 def reset_cart(phone: str) -> None:
     """Korzinani tashlash"""
-    sheets.delete_cart(phone)
+    if phone in _memory_carts:
+        del _memory_carts[phone]
+    try:
+        sheets.delete_cart(phone)
+    except Exception as e:
+        logger.debug(f"Sheets delete_cart fallback: {e}")
 
 
 def has_active_cart(phone: str) -> bool:
-    return sheets.get_cart(phone) is not None
+    if phone in _memory_carts and not _memory_carts[phone].is_empty():
+        return True
+    return False

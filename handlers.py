@@ -439,15 +439,39 @@ def _ask_confirmation(chat_id: str, cart: Cart) -> None:
 
 
 def _handle_order_confirm(chat_id: str, phone: str, cart: Cart, customer: Optional[Dict]) -> None:
-    """Buyurtmani yakuniy tasdiqlash → Sheets va admin"""
+    """Buyurtmani yakuniy tasdiqlash → Sheets va admin
+
+    QATTIQ TEKSHIRUV:
+    1. Korzina bo'sh emas
+    2. Jami summa >= MIN_ORDER_SOMONI (100с)
+    3. Manzil bor
+    4. Tasdiqlangan telefon bor
+    Hech bir shart bajarilmasa — adminga YUBORILMAYDI.
+    """
+    # 1. Korzina bo'sh
     if cart.is_empty():
         whatsapp.send_message(chat_id, prompts.cart_empty())
         return
 
+    # 2. Eng kam buyurtma summasi tekshirish (admin'ga yubormaslik)
+    if cart.total < MIN_ORDER_SOMONI:
+        needed = MIN_ORDER_SOMONI - cart.total
+        whatsapp.send_message(
+            chat_id,
+            f"⚠️ Жами *{cart.total_display()}* — *{MIN_ORDER_SOMONI}с* дан кам.\n"
+            f"Ҳозирча буюртмани жўната олмаймиз.\n\n"
+            f"Яна *{p.format_money(needed)}* қўшсангиз — *бепул етказамиз*! "
+            f"Қўшимча оласизми?",
+        )
+        cart_mod.save_cart(cart)
+        return
+
+    # 3. Manzil yo'q
     if not cart.address:
         whatsapp.send_message(chat_id, prompts.address_request())
         return
 
+    # 4. Telefon yo'q
     if not cart.confirmed_phone:
         if is_tajik_phone(phone):
             whatsapp.send_message(chat_id, prompts.phone_confirm_request(format_phone(phone)))
