@@ -79,6 +79,24 @@ def webhook():
         webhook_type = data.get("typeWebhook")
         logger.info(f"Webhook: {webhook_type}")
 
+        # DEBUG: catalog/order xabarlarni log'ga to'liq yozish + adminga jo'natish
+        try:
+            message_data = data.get("messageData", {})
+            msg_type = message_data.get("typeMessage", "")
+            if msg_type and msg_type != "textMessage":
+                import json as _json
+                payload_str = _json.dumps(data, ensure_ascii=False)[:2000]
+                logger.info(f"[DEBUG] Non-text msg type={msg_type}: {payload_str}")
+                # Adminga ham yuboramiz, debug uchun
+                try:
+                    whatsapp.send_to_admin(
+                        f"🔍 DEBUG: typeMessage={msg_type}\n\n```\n{payload_str[:1500]}\n```"
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # Faqat kelayotgan xabarlar
         if webhook_type != "incomingMessageReceived":
             return jsonify({"status": "ignored"}), 200
