@@ -1,12 +1,13 @@
 """
 ZargoBot — Korzina (Cart) modeli va boshqaruvi
-Server tomonida har bir mijoz uchun korzina holati saqlanadi.
-Math bu yerda — AI ga ishonmaymiz.
+YANGILANDI: Sheets'da saqlash, in-memory emas
 """
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
+
+import sheets
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +15,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CartItem:
     """Korzinadagi bitta mahsulot"""
-    product_name: str       # "Тухум (10 дона)" — Sheets'dagi to'liq nomi
-    qty_value: float        # 6 yoki 0.5
-    qty_unit: str           # "дона" yoki "кг" yoki "пакет" yoki "л"
-    price_total: float      # jami narxi shu pozitsiya uchun
+    product_name: str
+    qty_value: float
+    qty_unit: str
+    price_total: float
 
     def display_qty(self) -> str:
         """Foydalanuvchiga ko'rinadigan miqdor"""
@@ -42,6 +43,24 @@ class CartItem:
         """Mahsulot nomidan o'lchov bilan birgalik qismni olib tashlash"""
         return re.sub(r'\s*\([^)]*\)\s*', '', self.product_name).strip()
 
+    # === YANGI: Sheets'da saqlash uchun ===
+    def to_dict(self) -> Dict:
+        return {
+            "product_name": self.product_name,
+            "qty_value": self.qty_value,
+            "qty_unit": self.qty_unit,
+            "price_total": self.price_total,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "CartItem":
+        return cls(
+            product_name=data.get("product_name", ""),
+            qty_value=data.get("qty_value", 0),
+            qty_unit=data.get("qty_unit", ""),
+            price_total=data.get("price_total", 0),
+        )
+
 
 @dataclass
 class Cart:
@@ -52,8 +71,8 @@ class Cart:
     customer_gender: Optional[str] = None
     address: Optional[str] = None
     confirmed_phone: Optional[str] = None
-    stage: str = "collecting"  # collecting / awaiting_address / awaiting_phone / confirming / completed
-    is_night: bool = False     # тунги буюртма flagi
+    stage: str = "collecting"
+    is_night: bool = False
 
     @property
     def total(self) -> float:
@@ -123,32 +142,52 @@ class Cart:
 
     def to_metadata(self) -> List[Dict]:
         """Sheets'ga saqlash uchun metadata"""
-        return [
-            {
-                "name": item.short_name(),
-                "qty": item.display_qty(),
-                "price": int(item.price_total) if item.price_total == int(item.price_total) else round(item.price_total, 2),
-            }
-            for item in self.items
-        ]
+        return [item.to_dict() for item in self.items]
+
+    # === YANGI: Sheets'da saqlash uchun ===
+    def to_dict(self) -> Dict:
+        return {
+            "phone": self.phone,
+            "items": [item.to_dict() for item in self.items],
+            "customer_name": self.customer_name,
+            "customer_gender": self.customer_gender,
+            "address": self.address,
+            "confirmed_phone": self.confirmed_phone,
+            "stage": self.stage,
+            "is_night": self.is_night,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "Cart":
+        cart = cls(phone=data.get("phone", ""))
+        cart.items = [CartItem.from_dict(i) for i in data.get("items", [])]
+        cart.customer_name = data.get("customer_name")
+        cart.customer_gender = data.get("customer_gender")
+        cart.address = data.get("address")
+        cart.confirmed_phone = data.get("confirmed_phone")
+        cart.stage = data.get("stage", "collecting")
+        cart.is_night = data.get("is_night", False)
+        return cart
 
 
-# === IN-MEMORY KORZINA SAQLASH ===
-_carts: Dict[str, Cart] = {}
-
-
+# === YANGI: Sheets'da saqlash ===
 def get_cart(phone: str) -> Cart:
-    """Mijoz korzinasini olish (yo'q bo'lsa, yangi yaratiladi)"""
-    if phone not in _carts:
-        _carts[phone] = Cart(phone=phone)
-    return _carts[phone]
+    """Mijoz korzinasini olish (Sheets'dan)"""
+    cart_data = sheets.get_cart(phone)
+    if cart_data:
+        return Cart.from_dict(cart_data)
+    return Cart(phone=phone)
+
+
+def save_cart(cart: Cart) -> None:
+    """Korzinani saqlash (Sheets'ga)"""
+    sheets.save_cart(cart.to_dict())
 
 
 def reset_cart(phone: str) -> None:
     """Korzinani tashlash"""
-    if phone in _carts:
-        del _carts[phone]
+    sheets.delete_cart(phone)
 
 
 def has_active_cart(phone: str) -> bool:
-    return phone in _carts and not _carts[phone].is_empty()
+    return sheets.get_cart(phone) is not None

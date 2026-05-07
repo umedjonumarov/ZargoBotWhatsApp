@@ -1,6 +1,7 @@
 """
 ZargoBot — Asosiy Flask serveri
 WhatsApp webhook + cron endpoints + health check
+YANGILANDI: __import__("config") o'chirildi, ADMIN_PHONE to'g'ridan-to'g'ri import qilindi
 """
 import logging
 from datetime import datetime
@@ -14,7 +15,9 @@ from config import (
     SHOP_NAME,
     OPENAI_API_KEY,
     GREEN_API_TOKEN,
+    GREEN_API_INSTANCE_ID,
     SHEETS_URL,
+    ADMIN_PHONE,
 )
 
 import sheets
@@ -35,7 +38,6 @@ TZ = pytz.timezone("Asia/Dushanbe")
 # === FLASK ===
 app = Flask(__name__)
 
-
 # =========================================================================
 # UMUMIY ENDPOINT'LAR
 # =========================================================================
@@ -43,7 +45,6 @@ app = Flask(__name__)
 @app.route("/")
 def index():
     return f"{SHOP_NAME} Bot ишлаяпти ✅", 200
-
 
 @app.route("/health")
 def health():
@@ -63,7 +64,6 @@ def health():
     overall_ok = sheets_ok and wa_ok and openai_ok
     return jsonify(status), 200 if overall_ok else 503
 
-
 # =========================================================================
 # WHATSAPP WEBHOOK
 # =========================================================================
@@ -79,7 +79,7 @@ def webhook():
         webhook_type = data.get("typeWebhook")
         logger.info(f"Webhook: {webhook_type}")
 
-        # DEBUG: catalog/order xabarlarni log'ga to'liq yozish + adminga jo'natish
+        # DEBUG: catalog/order xabarlarni log'ga to'liq yozish
         try:
             message_data = data.get("messageData", {})
             msg_type = message_data.get("typeMessage", "")
@@ -87,7 +87,6 @@ def webhook():
                 import json as _json
                 payload_str = _json.dumps(data, ensure_ascii=False)[:2000]
                 logger.info(f"[DEBUG] Non-text msg type={msg_type}: {payload_str}")
-                # Adminga ham yuboramiz, debug uchun
                 try:
                     whatsapp.send_to_admin(
                         f"🔍 DEBUG: typeMessage={msg_type}\n\n```\n{payload_str[:1500]}\n```"
@@ -106,9 +105,8 @@ def webhook():
         if not parsed:
             return jsonify({"status": "no_message"}), 200
 
-        if not admin.is_bot_active() and parsed["sender_number"] not in (
-            __import__("config").ADMIN_PHONE,
-        ):
+        # YANGI: To'g'ridan-to'g'ri ADMIN_PHONE ishlatiladi
+        if not admin.is_bot_active() and parsed["sender_number"] not in (ADMIN_PHONE,):
             logger.info(f"Bot to'xtatilgan, e'tiborga olinmadi: +{parsed['sender_number']}")
             return jsonify({"status": "bot_paused"}), 200
 
@@ -127,16 +125,12 @@ def webhook():
             pass
         return jsonify({"status": "error"}), 200
 
-
 # =========================================================================
 # CRON TASK ENDPOINT'LARI
-# Tashqi cron service (cron-job.org) shu URL'larni chaqiradi
-# Format: ?secret=CRON_SECRET (xavfsizlik uchun)
 # =========================================================================
 
 def _check_secret() -> bool:
     return request.args.get("secret") == CRON_SECRET
-
 
 @app.route("/cron/morning-night-orders", methods=["GET", "POST"])
 def cron_morning_night():
@@ -146,7 +140,6 @@ def cron_morning_night():
     result = reminders.send_morning_night_orders()
     return jsonify(result), 200
 
-
 @app.route("/cron/breakfast-reminder", methods=["GET", "POST"])
 def cron_breakfast():
     """Har kuni 20:00 — 3 kun oldin nonushta sotib olganlarga"""
@@ -154,7 +147,6 @@ def cron_breakfast():
         return jsonify({"error": "unauthorized"}), 401
     result = reminders.send_breakfast_reminders()
     return jsonify(result), 200
-
 
 @app.route("/cron/reorder-reminder", methods=["GET", "POST"])
 def cron_reorder():
@@ -164,7 +156,6 @@ def cron_reorder():
     result = reminders.send_reorder_reminders()
     return jsonify(result), 200
 
-
 @app.route("/cron/loyalty-recovery", methods=["GET", "POST"])
 def cron_loyalty():
     """Har kuni 12:00 — 14 kun yo'q mijozlarga"""
@@ -172,7 +163,6 @@ def cron_loyalty():
         return jsonify({"error": "unauthorized"}), 401
     result = reminders.send_loyalty_recovery_reminders()
     return jsonify(result), 200
-
 
 @app.route("/cron/weekly-report", methods=["GET", "POST"])
 def cron_weekly():
@@ -182,7 +172,6 @@ def cron_weekly():
     result = reminders.send_weekly_report()
     return jsonify(result), 200
 
-
 @app.route("/cron/monthly-report", methods=["GET", "POST"])
 def cron_monthly():
     """Har oy 1-sanasi ertalab — adminga oylik hisobot"""
@@ -191,12 +180,13 @@ def cron_monthly():
     result = reminders.send_monthly_report()
     return jsonify(result), 200
 
-
 @app.route("/cron/keep-alive", methods=["GET", "POST"])
 def cron_keep_alive():
     """Render bepul tarif uxlamasligi uchun (har 10 daqiqada)"""
+    # YANGI: Secret tekshiruvi qo'shildi
+    if not _check_secret():
+        return jsonify({"error": "unauthorized"}), 401
     return jsonify({"status": "alive", "time": datetime.now(TZ).isoformat()}), 200
-
 
 # =========================================================================
 # WEBHOOK SOZLASH (admin uchun)
@@ -204,17 +194,15 @@ def cron_keep_alive():
 
 @app.route("/setup-webhook", methods=["GET"])
 def setup_webhook():
-    """Green API'da webhook URL'ni o'rnatish (faqat bir marta kerak)"""
+    """Green API'da webhook URL'ni o'rnatish"""
     if not _check_secret():
         return jsonify({"error": "unauthorized"}), 401
 
-    # Hozirgi server URL'ini topish
     base_url = request.args.get("url") or f"https://{request.host}"
     webhook_url = f"{base_url}/webhook"
 
     result = whatsapp.setup_webhook(webhook_url)
     return jsonify({"webhook_url": webhook_url, "result": result}), 200
-
 
 @app.route("/check-settings", methods=["GET"])
 def check_settings():
@@ -223,9 +211,8 @@ def check_settings():
         return jsonify({"error": "unauthorized"}), 401
     return jsonify(whatsapp.get_settings()), 200
 
-
 # =========================================================================
-# ISHGA TUSHIRISH (lokal test uchun)
+# ISHGA TUSHIRISH
 # =========================================================================
 
 if __name__ == "__main__":

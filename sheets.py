@@ -1,5 +1,7 @@
 """
 ZargoBot — Google Sheets bilan ishlash (Apps Script orqali)
+YANGILANDI: format_phone_display, is_tajik_phone, normalize_phone saqlanib qoldi
+YANGI: update_order_status, get_order, get_bot_status, set_bot_status, get_cart, save_cart, delete_cart
 """
 import logging
 import time
@@ -58,7 +60,6 @@ def get_products(force_refresh: bool = False) -> List[Dict]:
 
     result = _get("products")
     if "error" in result:
-        # Xato bo'lsa eski cache'ni qaytarish, yo'q bo'lsa bo'sh ro'yxat
         return _products_cache or []
 
     _products_cache = result.get("products", [])
@@ -89,11 +90,10 @@ def format_products_for_ai() -> str:
             split = p.get("splittable", "Йўқ")
             split_info = ""
             if split == "Дона":
-                # Mahsulot nomidan dona sonini olishga harakat
                 split_info = " [бўлинади дона билан]"
             elif split == "Грамм":
                 split_info = " [бўлинади грамм/кг билан]"
-            lines.append(f"  • {p['name']} — {price}{split_info}")
+            lines.append(f" • {p['name']} — {price}{split_info}")
 
     return "\n".join(lines)
 
@@ -126,14 +126,14 @@ def save_customer(customer: Dict) -> bool:
 
 
 def update_customer(phone: str, updates: Dict) -> bool:
-    """Mijoz ma'lumotlarini yangilash (ba'zi maydonlar)"""
+    """Mijoz ma'lumotlarini yangilash"""
     phone = _normalize_phone(phone)
     result = _post("update_customer", {"phone": phone, "updates": updates})
     return result.get("updated", False)
 
 
 def set_reminder_status(phone: str, value: str) -> bool:
-    """Mijozning eslatma holatini o'zgartirish ('on' yoki 'off')"""
+    """Mijozning eslatma holatini o'zgartirish"""
     phone = _normalize_phone(phone)
     result = _post("set_reminder", {"phone": phone, "value": value})
     return result.get("updated", False)
@@ -169,6 +169,23 @@ def save_order(order: Dict) -> Dict:
     return result
 
 
+# === YANGI: Buyurtma statusini o'zgartirish ===
+def update_order_status(order_number: str, status: str) -> Dict:
+    """Buyurtma statusini o'zgartirish"""
+    result = _post("update_order_status", {
+        "number": order_number,
+        "status": status
+    })
+    return result
+
+
+# === YANGI: Buyurtma ma'lumotlarini olish ===
+def get_order(order_number: str) -> Optional[Dict]:
+    """Buyurtma ma'lumotlarini olish"""
+    result = _get("order", number=order_number)
+    return result.get("order")
+
+
 # === TUNGI BUYURTMALAR ===
 
 def get_night_orders() -> List[Dict]:
@@ -179,7 +196,7 @@ def get_night_orders() -> List[Dict]:
 
 
 def save_night_order(order: Dict) -> bool:
-    """Tungi buyurtmani saqlash (ertalab tasdiqlanadi)"""
+    """Tungi buyurtmani saqlash"""
     order["phone"] = _normalize_phone(order.get("phone", ""))
     if "date" not in order:
         order["date"] = datetime.now().isoformat()
@@ -188,7 +205,7 @@ def save_night_order(order: Dict) -> bool:
 
 
 def confirm_night_order(phone: str) -> Optional[Dict]:
-    """Tungi buyurtmani tasdiqlash, buyurtma ma'lumotlarini qaytaradi"""
+    """Tungi buyurtmani tasdiqlash"""
     phone = _normalize_phone(phone)
     result = _post("confirm_night_order", {"phone": phone})
     if result.get("confirmed"):
@@ -196,23 +213,57 @@ def confirm_night_order(phone: str) -> Optional[Dict]:
     return None
 
 
+# === YANGI: Bot holati ===
+def get_bot_status() -> bool:
+    """Bot holatini olish"""
+    result = _get("bot_status")
+    return result.get("active", True)
+
+
+def set_bot_status(active: bool) -> bool:
+    """Bot holatini o'zgartirish"""
+    result = _post("set_bot_status", {"active": active})
+    return result.get("updated", False)
+
+
+# === YANGI: Cart (korzina) ===
+def get_cart(phone: str) -> Optional[Dict]:
+    """Mijoz cart'ini olish"""
+    phone = _normalize_phone(phone)
+    result = _get("cart", phone=phone)
+    return result.get("cart")
+
+
+def save_cart(cart_data: Dict) -> bool:
+    """Cart'ini saqlash"""
+    result = _post("save_cart", {"cart": cart_data})
+    return result.get("saved", False)
+
+
+def delete_cart(phone: str) -> bool:
+    """Cart'ini o'chirish"""
+    phone = _normalize_phone(phone)
+    result = _post("delete_cart", {"phone": phone})
+    return result.get("deleted", False)
+
+
 # === YORDAMCHI ===
 
 def _normalize_phone(phone: str) -> str:
-    """Telefon raqamini standart shaklga keltirish (faqat raqamlar)"""
+    """Telefon raqamini standart shaklga keltirish"""
     if not phone:
         return ""
     return "".join(c for c in str(phone) if c.isdigit())
 
 
 def is_tajik_phone(phone: str) -> bool:
-    """Telefon raqami Tojikistoniki ekanini tekshirish (+992 + 9 raqam)"""
+    """Telefon raqami Tojikistoniki ekanini tekshirish"""
     digits = _normalize_phone(phone)
     return digits.startswith("992") and len(digits) == 12
 
 
 def format_phone_display(phone: str) -> str:
-    """Telefon raqamini chiroyli ko'rinishda chiqarish: +992 90 123 45 67"""
+    """Telefon raqamini chiroyli ko'rinishda chiqarish"""
     digits = _normalize_phone(phone)
     if len(digits) == 12 and digits.startswith("992"):
         return f"+{digits[:3]} {digits[3:5]} {digits[5:8]} {digits[8:10]} {digits[10:]}"

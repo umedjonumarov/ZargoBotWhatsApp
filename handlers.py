@@ -1,6 +1,11 @@
 """
 ZargoBot — Mijoz xabarlarini qayta ishlash
-Server-side cart + intent-based AI parsing
+YANGILANDI: 
+- product_parser importi
+- is_tajik_phone, format_phone sheets dan import
+- Katalog buyurtma to'liq ishlashi
+- AI salomlashish aqlli (kun davomida bir marta)
+- Cart Sheets'da saqlanadi
 """
 import logging
 from datetime import datetime
@@ -11,10 +16,11 @@ import pytz
 import sheets
 import whatsapp
 import ai
-import parser as p
+import product_parser as p
 import prompts
 import cart as cart_mod
 from cart import Cart, CartItem
+from sheets import is_tajik_phone, format_phone_display as format_phone
 from config import (
     SHOP_HOURS_START,
     SHOP_HOURS_END,
@@ -70,7 +76,7 @@ def handle_customer_message(parsed: Dict) -> None:
         whatsapp.send_message(chat_id, prompts.voice_image_response())
         return
 
-    # 4. Bo'sh xabar
+    # 5. Bo'sh xabar
     if not parsed["is_text"]:
         return
 
@@ -112,14 +118,13 @@ def _process(chat_id: str, phone: str, user_message: str) -> None:
     is_first_message = is_new and not cart.customer_name
 
     if is_first_message:
-        # AI dan intent parse qilamiz — agar ism aytsa qabul qilamiz
+        # AI dan intent parse qilamiz
         intent_data = ai.parse_intent(user_message)
         intent = intent_data.get("intent")
 
         if intent == "provide_name" and intent_data.get("name"):
             _save_name_and_continue(chat_id, phone, intent_data["name"], cart)
         else:
-            # Aks holda salomlashib, ismini so'raymiz
             whatsapp.send_message(chat_id, prompts.greeting_new_customer())
         return
 
@@ -196,6 +201,9 @@ def _process(chat_id: str, phone: str, user_message: str) -> None:
             name_part = ai.honorific(cart.customer_name, cart.customer_gender or "эркак")
         whatsapp.send_message(chat_id, prompts.unclear_response(name_part))
 
+    # === YANGI: Har bir amaldan keyin cart saqlash ===
+    cart_mod.save_cart(cart)
+
 
 # =========================================================================
 # AMAL FUNKSIYALARI
@@ -217,21 +225,46 @@ def _save_name_and_continue(chat_id: str, phone: str, name: str, cart: Cart) -> 
 
 
 def _handle_greeting(chat_id: str, cart: Cart, customer: Optional[Dict]) -> None:
-    """Salomlashish — agar suhbat o'rtasida bo'lsa, kontekstni saqlaydi"""
-    if cart.is_empty() and not cart.address:
-        # Yangi suhbat
-        if customer:
-            whatsapp.send_message(
-                chat_id,
-                prompts.greeting_returning_customer(
-                    customer.get("name", "Мижоз"),
-                    customer.get("gender", "эркак"),
-                ),
-            )
-        else:
+    """Salomlashish — kun davomida bir marta"""
+    if not customer:
+        # Yangi mijoz
+        if cart.is_empty() and not cart.address:
             whatsapp.send_message(chat_id, prompts.greeting_new_customer())
+        else:
+            _resume_flow(chat_id, cart)
+        return
+
+    # Mijoz ma'lumotlarini olish
+    last_chat_date = customer.get("last_chat_date", "")
+    chat_count_today = customer.get("chat_count_today", 0)
+    today = datetime.now(TZ).strftime("%Y-%m-%d")
+
+    # Oxirgi xabar vaqtini yangilash
+    sheets.update_customer(customer["phone"], {
+        "last_chat_date": today,
+        "chat_count_today": chat_count_today + 1 if last_chat_date == today else 1
+    })
+
+    # Kun davomida qayta yozgan — qayta salomlashmaslik
+    if last_chat_date == today and chat_count_today > 0:
+        name = ai.honorific(customer.get("name", ""), customer.get("gender", "эркак"))
+        whatsapp.send_message(
+            chat_id,
+            f"{name}, яна кўрганимиздан хурсандмиз! 😊\n\n"
+            f"Бугун нимани оламиз? 🛒"
+        )
+        return
+
+    # Ertasi kuni yoki birinchi marta
+    if cart.is_empty() and not cart.address:
+        whatsapp.send_message(
+            chat_id,
+            prompts.greeting_returning_customer(
+                customer.get("name", "Мижоз"),
+                customer.get("gender", "эркак"),
+            )
+        )
     else:
-        # Suhbat o'rtasida — kontekstni davom ettiramiz
         _resume_flow(chat_id, cart)
 
 
@@ -244,18 +277,16 @@ def _resume_flow(chat_id: str, cart: Cart) -> None:
             f"{name}, {prompts.address_request()}",
         )
     elif not cart.confirmed_phone:
-        # Telefon kutamiz
         whatsapp.send_message(
             chat_id,
             f"{name}, илтимос телефон рақамингизни тасдиқланг.",
         )
     else:
-        # Tasdiqlash kutamiz
         _ask_confirmation(chat_id, cart)
 
 
 def _handle_add_by_qty(chat_id: str, cart: Cart, intent_data: Dict) -> None:
-    """Aniq miqdor (10 dona, 0.5 kg) bo'yicha qo'shish"""
+    """Aniq miqdor bo'yicha qo'shish"""
     products = intent_data.get("products", [])
     money_products = intent_data.get("money_products", [])
 
@@ -276,7 +307,6 @@ def _handle_add_by_qty(chat_id: str, cart: Cart, intent_data: Dict) -> None:
         elif err:
             errors.append(err)
 
-    # Bir xabarda ham pul, ham aniq bo'lishi mumkin
     for prod in money_products:
         item, err, alt = p.add_by_money(
             prod.get("name", ""),
@@ -294,7 +324,6 @@ def _handle_add_by_qty(chat_id: str, cart: Cart, intent_data: Dict) -> None:
         elif err:
             errors.append(err)
 
-    # Hech narsa qo'shilmadi
     if not added_messages and not errors:
         whatsapp.send_message(chat_id, prompts.unclear_response())
         return
@@ -302,7 +331,6 @@ def _handle_add_by_qty(chat_id: str, cart: Cart, intent_data: Dict) -> None:
     response_parts = added_messages + errors
     response_parts.append(f"\n💰 Жами: *{cart.total_display()}*")
 
-    # 100с dan kam bo'lsa eslatma
     if 0 < cart.total < MIN_ORDER_SOMONI:
         needed = MIN_ORDER_SOMONI - cart.total
         response_parts.append(
@@ -316,8 +344,7 @@ def _handle_add_by_qty(chat_id: str, cart: Cart, intent_data: Dict) -> None:
 
 
 def _handle_add_by_money(chat_id: str, cart: Cart, intent_data: Dict) -> None:
-    """Pul miqdori bo'yicha qo'shish ("10 сомонлик тухум")"""
-    # add_by_qty ga o'xshash, lekin money_products ga e'tibor
+    """Pul miqdori bo'yicha qo'shish"""
     _handle_add_by_qty(chat_id, cart, intent_data)
 
 
@@ -350,12 +377,10 @@ def _handle_address(chat_id: str, cart: Cart, intent_data: Dict) -> None:
         whatsapp.send_message(chat_id, prompts.address_request())
         return
 
-    # Korzina bo'sh bo'lsa
     if cart.is_empty():
         whatsapp.send_message(chat_id, "Аввал маҳсулот танланг — корзинангиз бўш. 🛒")
         return
 
-    # Eng kam zakaz tekshiruvi
     if cart.total < MIN_ORDER_SOMONI:
         needed = MIN_ORDER_SOMONI - cart.total
         whatsapp.send_message(
@@ -368,12 +393,9 @@ def _handle_address(chat_id: str, cart: Cart, intent_data: Dict) -> None:
 
     cart.address = address
 
-    # Telefon bosqichiga o'tamiz
-    if p.is_tajik_phone(cart.phone):
-        # WhatsApp raqami Tojikistoniki
-        whatsapp.send_message(chat_id, prompts.phone_confirm_request(p.format_phone(cart.phone)))
+    if is_tajik_phone(cart.phone):
+        whatsapp.send_message(chat_id, prompts.phone_confirm_request(format_phone(cart.phone)))
     else:
-        # Tojikistoniki emas — boshqa raqam so'raymiz
         whatsapp.send_message(chat_id, prompts.phone_request_tajik())
 
 
@@ -384,17 +406,16 @@ def _handle_phone_confirm(chat_id: str, phone: str, cart: Cart, use_whatsapp: bo
         return
 
     if use_whatsapp:
-        if p.is_tajik_phone(phone):
+        if is_tajik_phone(phone):
             cart.confirmed_phone = phone
             _ask_confirmation(chat_id, cart)
         else:
             whatsapp.send_message(chat_id, prompts.phone_request_tajik())
         return
 
-    # Boshqa raqam berilgan
     candidate = raw_phone or ""
     digits = p.normalize_phone(candidate)
-    if p.is_tajik_phone(digits):
+    if is_tajik_phone(digits):
         cart.confirmed_phone = digits
         _ask_confirmation(chat_id, cart)
     else:
@@ -412,7 +433,7 @@ def _ask_confirmation(chat_id: str, cart: Cart) -> None:
             cart.format_items(),
             cart.total_display(),
             cart.address,
-            p.format_phone(cart.confirmed_phone),
+            format_phone(cart.confirmed_phone),
         ),
     )
 
@@ -428,8 +449,8 @@ def _handle_order_confirm(chat_id: str, phone: str, cart: Cart, customer: Option
         return
 
     if not cart.confirmed_phone:
-        if p.is_tajik_phone(phone):
-            whatsapp.send_message(chat_id, prompts.phone_confirm_request(p.format_phone(phone)))
+        if is_tajik_phone(phone):
+            whatsapp.send_message(chat_id, prompts.phone_confirm_request(format_phone(phone)))
         else:
             whatsapp.send_message(chat_id, prompts.phone_request_tajik())
         return
@@ -481,7 +502,7 @@ def _handle_order_confirm(chat_id: str, phone: str, cart: Cart, customer: Option
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📦 #{order_number}\n"
         f"👤 {cart.customer_name or '?'}\n"
-        f"📱 {p.format_phone(cart.confirmed_phone)}\n"
+        f"📱 {format_phone(cart.confirmed_phone)}\n"
         f"📍 {cart.address}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{items_text}\n"
@@ -490,7 +511,16 @@ def _handle_order_confirm(chat_id: str, phone: str, cart: Cart, customer: Option
         f"💳 Тўлов: нақд\n"
     )
     if has_loyalty:
-        admin_msg += f"\n🎁 *{LOYALTY_EVERY_N_ORDERS}-БУЮРТМА — 2 та нон ҳадя қўшинг!*"
+        admin_msg += f"\n🎁 *{LOYALTY_EVERY_N_ORDERS}-БУЮРТМА — {LOYALTY_GIFT} ҳадя қўшинг!*"
+
+    # === YANGI: Status o'zgartirish tugmalari ===
+    admin_msg += (
+        f"\n\n*Статусни ўзгартириш:*\n"
+        f"• `статус {order_number} тайёрланмоқда`\n"
+        f"• `статус {order_number} йўлда`\n"
+        f"• `статус {order_number} етказилди`\n"
+        f"• `статус {order_number} бекор`"
+    )
 
     whatsapp.send_to_admin(admin_msg)
     logger.info(f"Buyurtma: #{order_number}, +{phone}, {cart.total_display()}")
@@ -500,12 +530,11 @@ def _handle_order_confirm(chat_id: str, phone: str, cart: Cart, customer: Option
 
 
 def _handle_proceed(chat_id: str, phone: str, cart: Cart) -> None:
-    """Mijoz mahsulot tanlashni tugatdi — keyingi qadamga o'tamiz"""
+    """Mijoz mahsulot tanlashni tugatdi"""
     if cart.is_empty():
         whatsapp.send_message(chat_id, prompts.cart_empty())
         return
 
-    # Eng kam zakaz tekshiruvi
     if cart.total < MIN_ORDER_SOMONI:
         needed = MIN_ORDER_SOMONI - cart.total
         whatsapp.send_message(
@@ -515,7 +544,6 @@ def _handle_proceed(chat_id: str, phone: str, cart: Cart) -> None:
         )
         return
 
-    # Manzil yo'q bo'lsa — manzil so'raymiz
     if not cart.address:
         whatsapp.send_message(
             chat_id,
@@ -523,20 +551,18 @@ def _handle_proceed(chat_id: str, phone: str, cart: Cart) -> None:
         )
         return
 
-    # Telefon yo'q bo'lsa — telefon so'raymiz
     if not cart.confirmed_phone:
-        if p.is_tajik_phone(phone):
-            whatsapp.send_message(chat_id, prompts.phone_confirm_request(p.format_phone(phone)))
+        if is_tajik_phone(phone):
+            whatsapp.send_message(chat_id, prompts.phone_confirm_request(format_phone(phone)))
         else:
             whatsapp.send_message(chat_id, prompts.phone_request_tajik())
         return
 
-    # Hammasi tayyor — tasdiqlash so'raymiz
     _ask_confirmation(chat_id, cart)
 
 
 def _handle_cancel(chat_id: str, phone: str, cart: Cart) -> None:
-    """Bekor qilish — agar tasdiqlanmagan bo'lsa"""
+    """Bekor qilish"""
     if cart.is_empty():
         whatsapp.send_message(chat_id, "Корзинангиз бўш эди.")
         return
@@ -571,7 +597,6 @@ def _handle_night_order_save(chat_id: str, phone: str, cart: Cart) -> None:
         prompts.night_order_saved(cart.format_items(), cart.total_display()),
     )
 
-    # Mijoz ma'lumotini ham saqlash
     if cart.customer_name:
         sheets.save_customer({
             "phone": cart.confirmed_phone or phone,
@@ -583,37 +608,48 @@ def _handle_night_order_save(chat_id: str, phone: str, cart: Cart) -> None:
     cart_mod.reset_cart(phone)
 
 
+# =========================================================================
+# YANGI: Katalog buyurtma to'liq ishlashi
+# =========================================================================
+
 def _handle_catalog_order(chat_id: str, phone: str, parsed: Dict) -> None:
-    """WhatsApp Business catalog'dan kelgan korzinani qabul qilish"""
+    """WhatsApp Business catalog'dan kelgan buyurtma"""
     cart = cart_mod.get_cart(phone)
     customer = sheets.get_customer(phone)
+    order_items = parsed.get("order_items", [])
 
-    # Mijoz ma'lumotlari yo'q bo'lsa
-    if not cart.customer_name and customer:
-        cart.customer_name = customer.get("name")
-        cart.customer_gender = customer.get("gender", "эркак")
-    elif not cart.customer_name and not customer:
-        # Yangi mijoz, lekin catalog orqali kirdi
+    # 1. YANGI MIJOZ — ism so'raymiz, lekin buyurtmani SAQLAB qo'yamiz
+    if not cart.customer_name and not customer:
+        _stage_catalog_items(cart, order_items)
+        cart_mod.save_cart(cart)
+        
         whatsapp.send_message(
             chat_id,
-            "Ассалому алейкум! Каталогингиз қабул қилинди. 🛒\n\n"
-            "Илтимос, аввало танишайлик — сизга қандай мурожаат қилишим мумкин?",
+            "🛒 Каталогдан буюртмангиз қабул қилинди! ✅\n\n"
+            "Аввало танишайлик — сизга қандай мурожаат қилишим мумкин? 👋"
         )
-        # Korzina ma'lumotini saqlab qo'yamiz, ism kelgach qayta ishlanadi
-        _stage_catalog_items(cart, parsed.get("order_items", []))
         return
 
+    # 2. MA'LUMOT BOR MIJOZ
+    if customer:
+        cart.customer_name = customer.get("name")
+        cart.customer_gender = customer.get("gender", "эркак")
+        if customer.get("address"):
+            cart.address = customer["address"]
+        if is_tajik_phone(phone):
+            cart.confirmed_phone = phone
+
+    # 3. Mahsulotlarni qo'shish
     items_added = []
     items_failed = []
-
-    for raw_item in parsed.get("order_items", []):
+    
+    for raw_item in order_items:
         product_name = raw_item.get("name", "").strip()
         qty = raw_item.get("qty", 1)
-
+        
         if not product_name:
             continue
-
-        # Mahsulotni Sheet'dan topish
+            
         item, err = p.add_by_quantity(product_name, qty, "")
         if item:
             cart.add_item(item)
@@ -624,13 +660,96 @@ def _handle_catalog_order(chat_id: str, phone: str, parsed: Dict) -> None:
             items_failed.append(f"❌ {product_name}: {err}")
 
     if not items_added and not items_failed:
-        whatsapp.send_message(
-            chat_id,
-            "Корзинадан маҳсулот ўқиб бўлмади. Илтимос матн орқали ёзинг.",
-        )
+        whatsapp.send_message(chat_id, "Каталогдан маҳсулот ўқиб бўлмади.")
         return
 
-    # Mijozga javob
+    # 4. BUYURTMANI SAQLASH
+    if cart.total >= MIN_ORDER_SOMONI and cart.address and cart.confirmed_phone:
+        _save_catalog_order_complete(chat_id, phone, cart, customer, items_added, items_failed)
+    else:
+        _continue_catalog_flow(chat_id, phone, cart, items_added, items_failed)
+
+    cart_mod.save_cart(cart)
+
+
+def _save_catalog_order_complete(chat_id, phone, cart, customer, items_added, items_failed):
+    """Catalog buyurtmasini to'liq saqlash"""
+    result = sheets.save_order({
+        "phone": cart.confirmed_phone,
+        "name": cart.customer_name or "?",
+        "address": cart.address,
+        "items": cart.to_admin_format(),
+        "total": cart.total,
+        "payment": "нақд",
+        "status": "қабул қилинди",
+        "source": "catalog"
+    })
+    
+    order_number = result.get("number", "?")
+    
+    new_total_orders = (customer.get("total_orders", 0) if customer else 0) + 1
+    new_total_spent = (customer.get("total_spent", 0) if customer else 0) + cart.total
+    
+    sheets.save_customer({
+        "phone": cart.confirmed_phone,
+        "name": cart.customer_name,
+        "gender": cart.customer_gender,
+        "address": cart.address,
+        "total_orders": new_total_orders,
+        "total_spent": new_total_spent,
+        "last_order": datetime.now(TZ).strftime("%Y-%m-%d"),
+    })
+    
+    has_loyalty = (new_total_orders % LOYALTY_EVERY_N_ORDERS == 0)
+    
+    # MIJOZGA
+    msg = (
+        f"✅ *Буюртмангиз қабул қилинди!*\n\n"
+        f"📦 Буюртма рақами: *#{order_number}*\n"
+        f"💰 Жами: *{cart.total_display()}*\n\n"
+    )
+    if items_added:
+        msg += "*Танланганлар:*\n" + "\n".join(items_added) + "\n\n"
+    if items_failed:
+        msg += "*Топилмаганлар:*\n" + "\n".join(items_failed) + "\n\n"
+    msg += "📞 Тез орада сиз билан боғланамиз.\n"
+    if has_loyalty:
+        msg += f"\n🎉 Бу {LOYALTY_EVERY_N_ORDERS}-буюртмангиз! {LOYALTY_GIFT} ҳадя!"
+    
+    whatsapp.send_message(chat_id, msg)
+    
+    # ADMINGA
+    admin_msg = (
+        f"🛒 *ЯНГИ КАТАЛОГ БУЮРТМАСИ!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 #{order_number}\n"
+        f"👤 {cart.customer_name or '?'}\n"
+        f"📱 {format_phone(cart.confirmed_phone)}\n"
+        f"📍 {cart.address}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"*Маҳсулотлар:*\n{cart.to_admin_format()}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Жами: *{cart.total_display()}*\n"
+        f"💳 Тўлов: нақд\n"
+        f"📱 Манба: Каталог\n"
+    )
+    if has_loyalty:
+        admin_msg += f"\n🎁 *{LOYALTY_EVERY_N_ORDERS}-БУЮРТМА — {LOYALTY_GIFT} ҳадя қўшинг!*"
+    
+    admin_msg += (
+        f"\n\n*Статусни ўзгартириш:*\n"
+        f"• `статус {order_number} тайёрланмоқда`\n"
+        f"• `статус {order_number} йўлда`\n"
+        f"• `статус {order_number} етказилди`\n"
+        f"• `статус {order_number} бекор`"
+    )
+    
+    whatsapp.send_to_admin(admin_msg)
+    cart_mod.reset_cart(phone)
+
+
+def _continue_catalog_flow(chat_id, phone, cart, items_added, items_failed):
+    """Catalog buyurtmasi — ma'lumot yetishmaydi"""
     response = ["🛒 *Каталогдан буюртмангиз қабул қилинди:*\n"]
     response.extend(items_added)
     if items_failed:
@@ -651,7 +770,7 @@ def _handle_catalog_order(chat_id: str, phone: str, parsed: Dict) -> None:
 
 
 def _stage_catalog_items(cart: Cart, items: list) -> None:
-    """Yangi mijoz catalog yuborgan, ismini kutib turamiz, items'ni saqlaymiz"""
+    """Yangi mijoz catalog yuborgan, ismini kutib turamiz"""
     for raw_item in items:
         product_name = raw_item.get("name", "").strip()
         qty = raw_item.get("qty", 1)
@@ -663,7 +782,7 @@ def _stage_catalog_items(cart: Cart, items: list) -> None:
 
 
 def _products_menu_for_ai() -> str:
-    """AI ga mahsulotlar ro'yxatini qisqa ko'rinishda berish (sinonimlar bilan)"""
+    """AI ga mahsulotlar ro'yxatini qisqa ko'rinishda berish"""
     products = sheets.get_products()
     lines = []
     for p in products:
