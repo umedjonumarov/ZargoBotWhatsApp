@@ -69,6 +69,7 @@ class Cart:
     confirmed_phone: Optional[str] = None
     stage: str = "collecting"
     is_night: bool = False
+    has_pending_catalog_order: bool = False  # Yangi mijozning ismini kutib turamiz, keyin katalogni qayta ishlaymiz
 
     @property
     def total(self) -> float:
@@ -143,6 +144,7 @@ class Cart:
             "confirmed_phone": self.confirmed_phone,
             "stage": self.stage,
             "is_night": self.is_night,
+            "has_pending_catalog_order": self.has_pending_catalog_order,
         }
 
     @classmethod
@@ -155,6 +157,7 @@ class Cart:
         cart.confirmed_phone = data.get("confirmed_phone")
         cart.stage = data.get("stage", "collecting")
         cart.is_night = data.get("is_night", False)
+        cart.has_pending_catalog_order = data.get("has_pending_catalog_order", False)
         return cart
 
 

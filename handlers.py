@@ -222,6 +222,14 @@ def _save_name_and_continue(chat_id: str, phone: str, name: str, cart: Cart) -> 
     })
 
     whatsapp.send_message(chat_id, prompts.name_received(name, gender))
+    
+    # Agar katalog buyurtmasi kutilmokta bo'lsa, qayta ishlaymiz
+    if cart.has_pending_catalog_order:
+        cart.has_pending_catalog_order = False
+        cart_mod.save_cart(cart)
+        
+        # Katalog alohida handleriga yuborish
+        _continue_catalog_order_after_name(chat_id, phone, cart)
 
 
 def _handle_greeting(chat_id: str, cart: Cart, customer: Optional[Dict]) -> None:
@@ -645,6 +653,7 @@ def _handle_catalog_order(chat_id: str, phone: str, parsed: Dict) -> None:
     # 1. YANGI MIJOZ — ism so'raymiz, lekin buyurtmani SAQLAB qo'yamiz
     if not cart.customer_name and not customer:
         _stage_catalog_items(cart, order_items)
+        cart.has_pending_catalog_order = True  # Ismni kutib turamiz!
         cart_mod.save_cart(cart)
         
         whatsapp.send_message(
@@ -781,16 +790,90 @@ def _continue_catalog_flow(chat_id, phone, cart, items_added, items_failed):
         response.extend(items_failed)
     response.append(f"\n💰 Жами: *{cart.total_display()}*")
 
+    # HOLAT 1: Summa 100с dan kam → qo'shimcha so'rov, admin'ga yubormaslik
     if cart.total < MIN_ORDER_SOMONI:
         needed = MIN_ORDER_SOMONI - cart.total
         response.append(
             f"\n💡 Энг кам буюртма *{MIN_ORDER_SOMONI}с*. "
             f"Яна *{p.format_money(needed)}* қўшсангиз — бепул етказамиз!"
         )
-    else:
-        response.append(f"\n📍 {prompts.address_request()}")
+        whatsapp.send_message(chat_id, "\n".join(response))
+        return
 
-    whatsapp.send_message(chat_id, "\n".join(response))
+    # HOLAT 2: Summa ≥100с ammo manzil/telefon yo'q → so'rash
+    if not cart.address or not cart.confirmed_phone:
+        if not cart.address:
+            response.append(f"\n📍 {prompts.address_request()}")
+        if not cart.confirmed_phone:
+            if is_tajik_phone(phone):
+                response.append(
+                    f"\n📱 Телефон рақамингиз: *{format_phone(phone)}*\n"
+                    f"Тасдиқлаймисиз? 👍 ёки сўнги номер йўзинг"
+                )
+            else:
+                response.append(f"\n📱 {prompts.phone_request_tajik()}")
+        
+        whatsapp.send_message(chat_id, "\n".join(response))
+        return
+
+    # HOLAT 3: Summa ≥100с + Manzil + Telefon → Darhol admin'ga yuborish
+    customer = sheets.get_customer(phone)
+    _save_catalog_order_complete(chat_id, phone, cart, customer, items_added, items_failed)
+
+
+def _continue_catalog_order_after_name(chat_id: str, phone: str, cart: Cart) -> None:
+    """Yangi mijozning ismini saqlagan keyin katalog buyurtmasini qayta ishlaymiz"""
+    customer = sheets.get_customer(phone)
+    
+    # Yangi customer ma'lumotlarini kartaga copy qil
+    if customer:
+        if customer.get("address"):
+            cart.address = customer["address"]
+        if is_tajik_phone(phone):
+            cart.confirmed_phone = phone
+    
+    # Holat tekshirish
+    items_added = []
+    for item in cart.items:
+        items_added.append(f"✅ {item.short_name()} — {item.display_qty()} ({item.display_price()})")
+    
+    items_failed = []  # Yangi ishlovda, eski qo'shimcha xatolar yo'q
+    
+    # Asosiy logic: _continue_catalog_flow dan farq — bu ismni saqlagan keyin ishlaydi
+    response = ["🛒 *Каталогдан буюртмангиз қабул қилинди:*\n"]
+    response.extend(items_added)
+    response.append(f"\n💰 Жами: *{cart.total_display()}*")
+
+    # HOLAT 1: Summa 100с dan kam → qo'shimcha so'rov
+    if cart.total < MIN_ORDER_SOMONI:
+        needed = MIN_ORDER_SOMONI - cart.total
+        response.append(
+            f"\n💡 Энг кам буюртма *{MIN_ORDER_SOMONI}с*. "
+            f"Яна *{p.format_money(needed)}* қўшсангиз — бепул етказамиз!"
+        )
+        whatsapp.send_message(chat_id, "\n".join(response))
+        cart_mod.save_cart(cart)
+        return
+
+    # HOLAT 2: Summa ≥100с ammo manzil/telefon yo'q → so'rash
+    if not cart.address or not cart.confirmed_phone:
+        if not cart.address:
+            response.append(f"\n📍 {prompts.address_request()}")
+        if not cart.confirmed_phone:
+            if is_tajik_phone(phone):
+                response.append(
+                    f"\n📱 Телефон рақамингиз: *{format_phone(phone)}*\n"
+                    f"Тасдиқлаймисиз? 👍 ёки сўнги номер йўзинг"
+                )
+            else:
+                response.append(f"\n📱 {prompts.phone_request_tajik()}")
+        
+        whatsapp.send_message(chat_id, "\n".join(response))
+        cart_mod.save_cart(cart)
+        return
+
+    # HOLAT 3: Summa ≥100с + Manzil + Telefon → Darhol admin'ga yuborish
+    _save_catalog_order_complete(chat_id, phone, cart, customer, items_added, items_failed)
 
 
 def _stage_catalog_items(cart: Cart, items: list) -> None:

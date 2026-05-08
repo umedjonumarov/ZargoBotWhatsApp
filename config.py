@@ -17,7 +17,7 @@ OPENAI_MAX_TOKENS = 600
 # === GOOGLE SHEETS (Apps Script Web App URL) ===
 SHEETS_URL = os.environ.get(
     "SHEETS_URL",
-    "https://script.google.com/macros/s/AKfycbxK0BtqYzsgGsZnCnPNN7YuLVHDwtYlxYgmgLWOs7epnpy0Te_fsZ2q_BRE-WrmWtNmFA/exec"
+    "https://script.google.com/macros/s/AKfycbziUIX313Iw8gkdwnIXtjJROIBSN12vvIanzLVcxugQXb_eJFOXj0mrMqRzHLo3WAdXGQ/exec"
 )
 
 # === BOT VA ADMIN RAQAMLARI ===
